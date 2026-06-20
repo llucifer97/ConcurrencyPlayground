@@ -170,5 +170,84 @@ public class Main {
 
         System.out.println("All ReentrantMutex tests passed.");
 
+        // --- WaitingRoom demo ---
+        System.out.println("\n--- WaitingRoom demo ---");
+        int K = 3;
+        WaitingRoom room = new WaitingRoom(K, 5); // 3 slots, max 5 waiters
+        AtomicInteger peakInside = new AtomicInteger(0);
+
+        // 1) 20 threads competing for 3 slots — verify at most K inside at once
+        Thread[] users = new Thread[20];
+        for (int i = 0; i < 20; i++) {
+            users[i] = new Thread(() -> {
+                try {
+                    room.enter();
+                    try {
+                        // track peak concurrency
+                        int cur = room.getInsideCount();
+                        peakInside.updateAndGet(prev -> Math.max(prev, cur));
+                        Thread.sleep(50); // simulate checkout work
+                    } finally {
+                        room.leave(); // always runs even if work throws
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (IllegalStateException e) {
+                    System.out.println(e.getMessage());
+                }
+            }, "User-" + (i + 1));
+            users[i].start();
+        }
+        for (Thread u : users) u.join();
+        System.out.println("Peak inside: " + peakInside.get() + " (max allowed: " + K + ")");
+        assert peakInside.get() <= K : "Exceeded max slots!";
+
+        // 2) Timed enter — timeout on a full room
+        System.out.println("\n--- Timed enter demo ---");
+        WaitingRoom tinyRoom = new WaitingRoom(1, 10);
+        tinyRoom.enter(); // main thread takes the only slot
+
+        Thread timedUser = new Thread(() -> {
+            try {
+                boolean entered = tinyRoom.enter(500);
+                System.out.println("Timed enter result: " + entered + " (expected false)");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "TimedUser");
+        timedUser.start();
+        timedUser.join();
+        tinyRoom.leave();
+
+        // 3) Wait queue rejection
+        System.out.println("\n--- Wait queue rejection demo ---");
+        WaitingRoom strictRoom = new WaitingRoom(1, 2); // 1 slot, max 2 waiters
+        strictRoom.enter(); // fill the slot
+
+        Thread[] waiters = new Thread[4];
+        for (int i = 0; i < 4; i++) {
+            waiters[i] = new Thread(() -> {
+                try {
+                    strictRoom.enter();
+                    try {
+                        Thread.sleep(100);
+                    } finally {
+                        strictRoom.leave();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (IllegalStateException e) {
+                    System.out.println(e.getMessage());
+                }
+            }, "Waiter-" + (i + 1));
+            waiters[i].start();
+            Thread.sleep(10); // stagger so they queue up in order
+        }
+        Thread.sleep(200);
+        strictRoom.leave(); // free the slot for queued waiters
+        for (Thread w : waiters) w.join();
+
+        System.out.println("All WaitingRoom tests passed.");
+
     }
 }
